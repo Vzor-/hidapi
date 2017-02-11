@@ -1,23 +1,23 @@
 /*******************************************************
- HIDAPI - Multi-Platform library for
- communication with HID devices.
+HIDAPI - Multi-Platform library for
+communication with HID devices.
 
- Alan Ott
- Signal 11 Software
+Alan Ott
+Signal 11 Software
 
- 2010-07-03
+2010-07-03
 
- Copyright 2010, All Rights Reserved.
+Copyright 2010, All Rights Reserved.
 
- At the discretion of the user of this library,
- this software may be licensed under the terms of the
- GNU General Public License v3, a BSD-Style license, or the
- original HIDAPI license as outlined in the LICENSE.txt,
- LICENSE-gpl3.txt, LICENSE-bsd.txt, and LICENSE-orig.txt
- files located at the root of the source distribution.
- These files may also be found in the public source
- code repository located at:
-        http://github.com/signal11/hidapi .
+At the discretion of the user of this library,
+this software may be licensed under the terms of the
+GNU General Public License v3, a BSD-Style license, or the
+original HIDAPI license as outlined in the LICENSE.txt,
+LICENSE-gpl3.txt, LICENSE-bsd.txt, and LICENSE-orig.txt
+files located at the root of the source distribution.
+These files may also be found in the public source
+code repository located at:
+http://github.com/signal11/hidapi .
 ********************************************************/
 
 /* See Apple Technical Note TN2187 for details on IOHidManager. */
@@ -36,28 +36,28 @@
 #include "hidapi.h"
 
 /* Barrier implementation because Mac OSX doesn't have pthread_barrier.
-   It also doesn't have clock_gettime(). So much for POSIX and SUSv2.
-   This implementation came from Brent Priddy and was posted on
-   StackOverflow. It is used with his permission. */
+It also doesn't have clock_gettime(). So much for POSIX and SUSv2.
+This implementation came from Brent Priddy and was posted on
+StackOverflow. It is used with his permission. */
 typedef int pthread_barrierattr_t;
 typedef struct pthread_barrier {
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    int count;
-    int trip_count;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	int count;
+	int trip_count;
 } pthread_barrier_t;
 
 static int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
 {
-	if(count == 0) {
+	if (count == 0) {
 		errno = EINVAL;
 		return -1;
 	}
 
-	if(pthread_mutex_init(&barrier->mutex, 0) < 0) {
+	if (pthread_mutex_init(&barrier->mutex, 0) < 0) {
 		return -1;
 	}
-	if(pthread_cond_init(&barrier->cond, 0) < 0) {
+	if (pthread_cond_init(&barrier->cond, 0) < 0) {
 		pthread_mutex_destroy(&barrier->mutex);
 		return -1;
 	}
@@ -78,7 +78,7 @@ static int pthread_barrier_wait(pthread_barrier_t *barrier)
 {
 	pthread_mutex_lock(&barrier->mutex);
 	++(barrier->count);
-	if(barrier->count >= barrier->trip_count)
+	if (barrier->count >= barrier->trip_count)
 	{
 		barrier->count = 0;
 		pthread_cond_broadcast(&barrier->cond);
@@ -160,8 +160,8 @@ static void free_hid_device(hid_device *dev)
 	}
 
 	/* Free the string and the report buffer. The check for NULL
-	   is necessary here as CFRelease() doesn't handle NULL like
-	   free() and others do. */
+	is necessary here as CFRelease() doesn't handle NULL like
+	free() and others do. */
 	if (dev->run_loop_mode)
 		CFRelease(dev->run_loop_mode);
 	if (dev->source)
@@ -179,6 +179,9 @@ static void free_hid_device(hid_device *dev)
 }
 
 static	IOHIDManagerRef hid_mgr = 0x0;
+static	pthread_t hid_mgr_thread;
+static	pthread_barrier_t hid_mgr_barrier;
+static	CFRunLoopRef hid_mgr_run_loop;
 
 
 #if 0
@@ -197,7 +200,7 @@ static int32_t get_int_property(IOHIDDeviceRef device, CFStringRef key)
 	ref = IOHIDDeviceGetProperty(device, key);
 	if (ref) {
 		if (CFGetTypeID(ref) == CFNumberGetTypeID()) {
-			CFNumberGetValue((CFNumberRef) ref, kCFNumberSInt32Type, &value);
+			CFNumberGetValue((CFNumberRef)ref, kCFNumberSInt32Type, &value);
 			return value;
 		}
 	}
@@ -236,10 +239,10 @@ static int get_string_property(IOHIDDeviceRef device, CFStringRef prop, wchar_t 
 		CFIndex used_buf_len;
 		CFIndex chars_copied;
 
-		len --;
+		len--;
 
 		range.location = 0;
-		range.length = ((size_t)str_len > len)? len: (size_t)str_len;
+		range.length = ((size_t)str_len > len) ? len : (size_t)str_len;
 		chars_copied = CFStringGetBytes(str,
 			range,
 			kCFStringEncodingUTF32LE,
@@ -281,27 +284,27 @@ static int get_product_string(IOHIDDeviceRef device, wchar_t *buf, size_t len)
 static wchar_t *dup_wcs(const wchar_t *s)
 {
 	size_t len = wcslen(s);
-	wchar_t *ret = malloc((len+1)*sizeof(wchar_t));
+	wchar_t *ret = malloc((len + 1) * sizeof(wchar_t));
 	wcscpy(ret, s);
 
 	return ret;
 }
 
 /* hidapi_IOHIDDeviceGetService()
- *
- * Return the io_service_t corresponding to a given IOHIDDeviceRef, either by:
- * - on OS X 10.6 and above, calling IOHIDDeviceGetService()
- * - on OS X 10.5, extract it from the IOHIDDevice struct
- */
+*
+* Return the io_service_t corresponding to a given IOHIDDeviceRef, either by:
+* - on OS X 10.6 and above, calling IOHIDDeviceGetService()
+* - on OS X 10.5, extract it from the IOHIDDevice struct
+*/
 static io_service_t hidapi_IOHIDDeviceGetService(IOHIDDeviceRef device)
 {
 	static void *iokit_framework = NULL;
-	static io_service_t (*dynamic_IOHIDDeviceGetService)(IOHIDDeviceRef device) = NULL;
+	static io_service_t(*dynamic_IOHIDDeviceGetService)(IOHIDDeviceRef device) = NULL;
 
 	/* Use dlopen()/dlsym() to get a pointer to IOHIDDeviceGetService() if it exists.
-	 * If any of these steps fail, dynamic_IOHIDDeviceGetService will be left NULL
-	 * and the fallback method will be used.
-	 */
+	* If any of these steps fail, dynamic_IOHIDDeviceGetService will be left NULL
+	* and the fallback method will be used.
+	*/
 	if (iokit_framework == NULL) {
 		iokit_framework = dlopen("/System/Library/IOKit.framework/IOKit", RTLD_LAZY);
 
@@ -316,21 +319,21 @@ static io_service_t hidapi_IOHIDDeviceGetService(IOHIDDeviceRef device)
 	else
 	{
 		/* Running on OS X 10.5: IOHIDDeviceGetService() doesn't exist.
-		 *
-		 * Be naughty and pull the service out of the IOHIDDevice.
-		 * IOHIDDevice is an opaque struct not exposed to applications, but its
-		 * layout is stable through all available versions of OS X.
-		 * Tested and working on OS X 10.5.8 i386, x86_64, and ppc.
-		 */
+		*
+		* Be naughty and pull the service out of the IOHIDDevice.
+		* IOHIDDevice is an opaque struct not exposed to applications, but its
+		* layout is stable through all available versions of OS X.
+		* Tested and working on OS X 10.5.8 i386, x86_64, and ppc.
+		*/
 		struct IOHIDDevice_internal {
 			/* The first field of the IOHIDDevice struct is a
-			 * CFRuntimeBase (which is a private CF struct).
-			 *
-			 * a, b, and c are the 3 fields that make up a CFRuntimeBase.
-			 * See http://opensource.apple.com/source/CF/CF-476.18/CFRuntime.h
-			 *
-			 * The second field of the IOHIDDevice is the io_service_t we're looking for.
-			 */
+			* CFRuntimeBase (which is a private CF struct).
+			*
+			* a, b, and c are the 3 fields that make up a CFRuntimeBase.
+			* See http://opensource.apple.com/source/CF/CF-476.18/CFRuntime.h
+			*
+			* The second field of the IOHIDDevice is the io_service_t we're looking for.
+			*/
 			uintptr_t a;
 			uint8_t b[4];
 #if __LP64__
@@ -344,14 +347,56 @@ static io_service_t hidapi_IOHIDDeviceGetService(IOHIDDeviceRef device)
 	}
 }
 
+static void *manager_thread(void *param)
+{
+	SInt32 code;
+
+	/* Move the manager's run loop to this thread. */
+	IOHIDManagerSetDeviceMatching(hid_mgr, NULL);
+	IOHIDManagerScheduleWithRunLoop(hid_mgr, CFRunLoopGetCurrent(), CFSTR("hidapi"));
+
+	/* Store off the Run Loop so it can be stopped from hid_exit() */
+	hid_mgr_run_loop = CFRunLoopGetCurrent();
+
+	/* Notify init_hid_manager() that the manager thread is up and running. */
+	pthread_barrier_wait(&hid_mgr_barrier);
+
+	/* Run the Event Loop */
+	while (1) {
+		code = CFRunLoopRunInMode(CFSTR("hidapi"), 1000/*sec*/, FALSE);
+		if (code == kCFRunLoopRunTimedOut) {
+			/* If the run loop timed out, run it again */
+			continue;
+		}
+		else if (code == kCFRunLoopRunStopped) {
+			/* Run loop was stopped, must have been from hid_exit() */
+			break;
+		}
+		else if (code == kCFRunLoopRunFinished ||
+			code == kCFRunLoopRunTimedOut) {
+			/* Neither of these should ever be returned */
+			break;
+		}
+	}
+
+	/* Unschedule the manager from this thread's run loop (must be done before thread exits!) */
+	IOHIDManagerUnscheduleFromRunLoop(hid_mgr, CFRunLoopGetCurrent(), CFSTR("hidapi"));
+
+	return NULL;
+}
+
 /* Initialize the IOHIDManager. Return 0 for success and -1 for failure. */
 static int init_hid_manager(void)
 {
 	/* Initialize all the HID Manager Objects */
 	hid_mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
 	if (hid_mgr) {
-		IOHIDManagerSetDeviceMatching(hid_mgr, NULL);
-		IOHIDManagerScheduleWithRunLoop(hid_mgr, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+		/* Start the HID Manager thread */
+		pthread_barrier_init(&hid_mgr_barrier, NULL, 2);
+		pthread_create(&hid_mgr_thread, NULL, manager_thread, NULL);
+
+		/* Wait here for the HID Manager thread to be initialized. */
+		pthread_barrier_wait(&hid_mgr_barrier);
 		return 0;
 	}
 
@@ -359,8 +404,8 @@ static int init_hid_manager(void)
 }
 
 /* Initialize the IOHIDManager if necessary. This is the public function, and
-   it is safe to call this function repeatedly. Return 0 for success and -1
-   for failure. */
+it is safe to call this function repeatedly. Return 0 for success and -1
+for failure. */
 int HID_API_EXPORT hid_init(void)
 {
 	if (!hid_mgr) {
@@ -375,6 +420,12 @@ int HID_API_EXPORT hid_exit(void)
 {
 	if (hid_mgr) {
 		/* Close the HID manager. */
+		CFRunLoopStop(hid_mgr_run_loop);
+
+		/* Wait for the manager thread to exit */
+		pthread_join(hid_mgr_thread, NULL);
+		pthread_barrier_destroy(&hid_mgr_barrier);
+
 		IOHIDManagerClose(hid_mgr, kIOHIDOptionsTypeNone);
 		CFRelease(hid_mgr);
 		hid_mgr = NULL;
@@ -387,7 +438,7 @@ static void process_pending_events(void) {
 	SInt32 res;
 	do {
 		res = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, FALSE);
-	} while(res != kCFRunLoopRunFinished && res != kCFRunLoopRunTimedOut);
+	} while (res != kCFRunLoopRunFinished && res != kCFRunLoopRunTimedOut);
 }
 
 struct hid_device_info  HID_API_EXPORT *hid_enumerate(unsigned short vendor_id, unsigned short product_id)
@@ -411,26 +462,26 @@ struct hid_device_info  HID_API_EXPORT *hid_enumerate(unsigned short vendor_id, 
 	/* Convert the list into a C array so we can iterate easily. */
 	num_devices = CFSetGetCount(device_set);
 	IOHIDDeviceRef *device_array = calloc(num_devices, sizeof(IOHIDDeviceRef));
-	CFSetGetValues(device_set, (const void **) device_array);
+	CFSetGetValues(device_set, (const void **)device_array);
 
 	/* Iterate over each device, making an entry for it. */
 	for (i = 0; i < num_devices; i++) {
 		unsigned short dev_vid;
 		unsigned short dev_pid;
-		#define BUF_LEN 256
+#define BUF_LEN 256
 		wchar_t buf[BUF_LEN];
 
 		IOHIDDeviceRef dev = device_array[i];
 
-        if (!dev) {
-            continue;
-        }
+		if (!dev) {
+			continue;
+		}
 		dev_vid = get_vendor_id(dev);
 		dev_pid = get_product_id(dev);
 
 		/* Check the VID/PID against the arguments */
 		if ((vendor_id == 0x0 || vendor_id == dev_vid) &&
-		    (product_id == 0x0 || product_id == dev_pid)) {
+			(product_id == 0x0 || product_id == dev_pid)) {
 			struct hid_device_info *tmp;
 			io_object_t iokit_dev;
 			kern_return_t res;
@@ -515,7 +566,7 @@ hid_device * HID_API_EXPORT hid_open(unsigned short vendor_id, unsigned short pr
 	cur_dev = devs;
 	while (cur_dev) {
 		if (cur_dev->vendor_id == vendor_id &&
-		    cur_dev->product_id == product_id) {
+			cur_dev->product_id == product_id) {
 			if (serial_number) {
 				if (wcscmp(serial_number, cur_dev->serial_number) == 0) {
 					path_to_open = cur_dev->path;
@@ -541,7 +592,7 @@ hid_device * HID_API_EXPORT hid_open(unsigned short vendor_id, unsigned short pr
 }
 
 static void hid_device_removal_callback(void *context, IOReturn result,
-                                        void *sender)
+	void *sender)
 {
 	/* Stop the Run Loop for this device. */
 	hid_device *d = context;
@@ -551,11 +602,11 @@ static void hid_device_removal_callback(void *context, IOReturn result,
 }
 
 /* The Run Loop calls this function for each input report received.
-   This function puts the data into a linked list to be picked up by
-   hid_read(). */
+This function puts the data into a linked list to be picked up by
+hid_read(). */
 static void hid_report_callback(void *context, IOReturn result, void *sender,
-                         IOHIDReportType report_type, uint32_t report_id,
-                         uint8_t *report, CFIndex report_length)
+	IOHIDReportType report_type, uint32_t report_id,
+	uint8_t *report, CFIndex report_length)
 {
 	struct input_report *rpt;
 	hid_device *dev = context;
@@ -586,8 +637,8 @@ static void hid_report_callback(void *context, IOReturn result, void *sender,
 		cur->next = rpt;
 
 		/* Pop one off if we've reached 30 in the queue. This
-		   way we don't grow forever if the user never reads
-		   anything from the device. */
+		way we don't grow forever if the user never reads
+		anything from the device. */
 		if (num_queued > 30) {
 			return_data(dev, NULL, 0);
 		}
@@ -602,7 +653,7 @@ static void hid_report_callback(void *context, IOReturn result, void *sender,
 }
 
 /* This gets called when the read_thread's run loop gets signaled by
-   hid_close(), and serves to stop the read_thread's run loop. */
+hid_close(), and serves to stop the read_thread's run loop. */
 static void perform_signal_callback(void *context)
 {
 	hid_device *dev = context;
@@ -618,7 +669,7 @@ static void *read_thread(void *param)
 	IOHIDDeviceScheduleWithRunLoop(dev->device_handle, CFRunLoopGetCurrent(), dev->run_loop_mode);
 
 	/* Create the RunLoopSource which is used to signal the
-	   event loop to stop when hid_close() is called. */
+	event loop to stop when hid_close() is called. */
 	CFRunLoopSourceContext ctx;
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.version = 0;
@@ -628,14 +679,14 @@ static void *read_thread(void *param)
 	CFRunLoopAddSource(CFRunLoopGetCurrent(), dev->source, dev->run_loop_mode);
 
 	/* Store off the Run Loop so it can be stopped from hid_close()
-	   and on device disconnection. */
+	and on device disconnection. */
 	dev->run_loop = CFRunLoopGetCurrent();
 
 	/* Notify the main thread that the read thread is up and running. */
 	pthread_barrier_wait(&dev->barrier);
 
 	/* Run the Event Loop. CFRunLoopRunInMode() will dispatch HID input
-	   reports into the hid_report_callback(). */
+	reports into the hid_report_callback(). */
 	while (!dev->shutdown_thread && !dev->disconnected) {
 		code = CFRunLoopRunInMode(dev->run_loop_mode, 1000/*sec*/, FALSE);
 		/* Return if the device has been disconnected */
@@ -647,37 +698,37 @@ static void *read_thread(void *param)
 
 		/* Break if The Run Loop returns Finished or Stopped. */
 		if (code != kCFRunLoopRunTimedOut &&
-		    code != kCFRunLoopRunHandledSource) {
+			code != kCFRunLoopRunHandledSource) {
 			/* There was some kind of error. Setting
-			   shutdown seems to make sense, but
-			   there may be something else more appropriate */
+			shutdown seems to make sense, but
+			there may be something else more appropriate */
 			dev->shutdown_thread = 1;
 			break;
 		}
 	}
 
 	/* Now that the read thread is stopping, Wake any threads which are
-	   waiting on data (in hid_read_timeout()). Do this under a mutex to
-	   make sure that a thread which is about to go to sleep waiting on
-	   the condition actually will go to sleep before the condition is
-	   signaled. */
+	waiting on data (in hid_read_timeout()). Do this under a mutex to
+	make sure that a thread which is about to go to sleep waiting on
+	the condition actually will go to sleep before the condition is
+	signaled. */
 	pthread_mutex_lock(&dev->mutex);
 	pthread_cond_broadcast(&dev->condition);
 	pthread_mutex_unlock(&dev->mutex);
 
 	/* Wait here until hid_close() is called and makes it past
-	   the call to CFRunLoopWakeUp(). This thread still needs to
-	   be valid when that function is called on the other thread. */
+	the call to CFRunLoopWakeUp(). This thread still needs to
+	be valid when that function is called on the other thread. */
 	pthread_barrier_wait(&dev->shutdown_barrier);
 
 	return NULL;
 }
 
 /* hid_open_path()
- *
- * path must be a valid path to an IOHIDDevice in the IOService plane
- * Example: "IOService:/AppleACPIPlatformExpert/PCI0@0/AppleACPIPCI/EHC1@1D,7/AppleUSBEHCI/PLAYSTATION(R)3 Controller@fd120000/IOUSBInterface@0/IOUSBHIDDriver"
- */
+*
+* path must be a valid path to an IOHIDDevice in the IOService plane
+* Example: "IOService:/AppleACPIPlatformExpert/PCI0@0/AppleACPIPCI/EHC1@1D,7/AppleUSBEHCI/PLAYSTATION(R)3 Controller@fd120000/IOUSBInterface@0/IOUSBHIDDriver"
+*/
 hid_device * HID_API_EXPORT hid_open_path(const char *path)
 {
 	hid_device *dev = NULL;
@@ -709,11 +760,11 @@ hid_device * HID_API_EXPORT hid_open_path(const char *path)
 		char str[32];
 
 		/* Create the buffers for receiving data */
-		dev->max_input_report_len = (CFIndex) get_max_report_length(dev->device_handle);
+		dev->max_input_report_len = (CFIndex)get_max_report_length(dev->device_handle);
 		dev->input_report_buf = calloc(dev->max_input_report_len, sizeof(uint8_t));
 
 		/* Create the Run Loop Mode for this device.
-		   printing the reference seems to work. */
+		printing the reference seems to work. */
 		sprintf(str, "HIDAPI_%p", dev->device_handle);
 		dev->run_loop_mode =
 			CFStringCreateWithCString(NULL, str, kCFStringEncodingASCII);
@@ -760,22 +811,22 @@ static int set_report(hid_device *dev, IOHIDReportType type, const unsigned char
 
 	if (data[0] == 0x0) {
 		/* Not using numbered Reports.
-		   Don't send the report number. */
-		data_to_send = data+1;
-		length_to_send = length-1;
+		Don't send the report number. */
+		data_to_send = data + 1;
+		length_to_send = length - 1;
 	}
 	else {
 		/* Using numbered Reports.
-		   Send the Report Number */
+		Send the Report Number */
 		data_to_send = data;
 		length_to_send = length;
 	}
 
 	if (!dev->disconnected) {
 		res = IOHIDDeviceSetReport(dev->device_handle,
-					   type,
-					   data[0], /* Report ID*/
-					   data_to_send, length_to_send);
+			type,
+			data[0], /* Report ID*/
+			data_to_send, length_to_send);
 
 		if (res == kIOReturnSuccess) {
 			return length;
@@ -796,9 +847,9 @@ int HID_API_EXPORT hid_write(hid_device *dev, const unsigned char *data, size_t 
 static int return_data(hid_device *dev, unsigned char *data, size_t length)
 {
 	/* Copy the data out of the linked list item (rpt) into the
-	   return buffer (data), and delete the liked list item. */
+	return buffer (data), and delete the liked list item. */
 	struct input_report *rpt = dev->input_reports;
-	size_t len = (length < rpt->len)? length: rpt->len;
+	size_t len = (length < rpt->len) ? length : rpt->len;
 	memcpy(data, rpt->data, len);
 	dev->input_reports = rpt->next;
 	free(rpt->data);
@@ -814,10 +865,10 @@ static int cond_wait(const hid_device *dev, pthread_cond_t *cond, pthread_mutex_
 			return res;
 
 		/* A res of 0 means we may have been signaled or it may
-		   be a spurious wakeup. Check to see that there's acutally
-		   data in the queue before returning, and if not, go back
-		   to sleep. See the pthread_cond_timedwait() man page for
-		   details. */
+		be a spurious wakeup. Check to see that there's acutally
+		data in the queue before returning, and if not, go back
+		to sleep. See the pthread_cond_timedwait() man page for
+		details. */
 
 		if (dev->shutdown_thread || dev->disconnected)
 			return -1;
@@ -834,10 +885,10 @@ static int cond_timedwait(const hid_device *dev, pthread_cond_t *cond, pthread_m
 			return res;
 
 		/* A res of 0 means we may have been signaled or it may
-		   be a spurious wakeup. Check to see that there's acutally
-		   data in the queue before returning, and if not, go back
-		   to sleep. See the pthread_cond_timedwait() man page for
-		   details. */
+		be a spurious wakeup. Check to see that there's acutally
+		data in the queue before returning, and if not, go back
+		to sleep. See the pthread_cond_timedwait() man page for
+		details. */
 
 		if (dev->shutdown_thread || dev->disconnected)
 			return -1;
@@ -869,8 +920,8 @@ int HID_API_EXPORT hid_read_timeout(hid_device *dev, unsigned char *data, size_t
 
 	if (dev->shutdown_thread) {
 		/* This means the device has been closed (or there
-		   has been an error. An error code of -1 should
-		   be returned. */
+		has been an error. An error code of -1 should
+		be returned. */
 		bytes_read = -1;
 		goto ret;
 	}
@@ -923,7 +974,7 @@ ret:
 
 int HID_API_EXPORT hid_read(hid_device *dev, unsigned char *data, size_t length)
 {
-	return hid_read_timeout(dev, data, length, (dev->blocking)? -1: 0);
+	return hid_read_timeout(dev, data, length, (dev->blocking) ? -1 : 0);
 }
 
 int HID_API_EXPORT hid_set_nonblocking(hid_device *dev, int nonblock)
@@ -949,9 +1000,9 @@ int HID_API_EXPORT hid_get_feature_report(hid_device *dev, unsigned char *data, 
 		return -1;
 
 	res = IOHIDDeviceGetReport(dev->device_handle,
-	                           kIOHIDReportTypeFeature,
-	                           data[0], /* Report ID */
-	                           data, &len);
+		kIOHIDReportTypeFeature,
+		data[0], /* Report ID */
+		data, &len);
 	if (res == kIOReturnSuccess)
 		return len;
 	else
@@ -988,8 +1039,8 @@ void HID_API_EXPORT hid_close(hid_device *dev)
 	pthread_join(dev->thread, NULL);
 
 	/* Close the OS handle to the device, but only if it's not
-	   been unplugged. If it's been unplugged, then calling
-	   IOHIDDeviceClose() will crash. */
+	been unplugged. If it's been unplugged, then calling
+	IOHIDDeviceClose() will crash. */
 	if (!dev->disconnected) {
 		IOHIDDeviceClose(dev->device_handle, kIOHIDOptionsTypeSeizeDevice);
 	}
@@ -1084,7 +1135,7 @@ int main(void)
 
 	CFIndex num_devices = CFSetGetCount(device_set);
 	IOHIDDeviceRef *device_array = calloc(num_devices, sizeof(IOHIDDeviceRef));
-	CFSetGetValues(device_set, (const void **) device_array);
+	CFSetGetValues(device_set, (const void **)device_array);
 
 	for (i = 0; i < num_devices; i++) {
 		IOHIDDeviceRef dev = device_array[i];
